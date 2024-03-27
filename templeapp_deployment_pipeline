@@ -1,0 +1,91 @@
+image: docker:latest
+
+services:
+  - docker:24.0.5-dind
+
+variables:
+  DOCKER_DRIVER: overlay 
+  SPRING_PROFILES_ACTIVE: gitlab-ci 
+  DOCKER_TLS_CERTDIR: ""
+
+.retry_job: &retry_job
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+stages:
+  - deploy
+  #- sonarqube
+
+deploy_stage:
+  stage: deploy
+  image: ubuntu:latest
+  script:
+    - apt-get update
+    - apt-get install -y sshpass
+    - apt-get install git -y
+    - git config --global user.name "Akash Karmakar"
+    - git config --global user.email "akash.karmakar@sakhaglobal.com"
+    # Deployment Strat from here   
+    - export SSHPASS=Temple2024
+    - sshpass -e ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "sudo -S apt-get update -y" <<< "$SSHPASS"
+    - sshpass -e ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "sudo -S apt-get install git -y" <<< "$SSHPASS"
+    
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "ls"
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "echo $SSH_AUTHENTICATION"
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "echo $CI_USER"
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "echo $CI_ACCESS_TOKEN"
+
+    # Cloning the Dev branch into the server
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code && rm -rf backend"
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code && git clone -b Staging https://$CI_USER:$CI_ACCESS_TOKEN@repos.sakhaglobal.com/temple-app/backend.git"
+
+    # Composer Installation & Configure
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && composer update"
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && composer require darkaonline/l5-swagger"
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && php artisan vendor:publish --provider="L5Swagger\L5SwaggerServiceProvider""
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && php artisan l5-swagger:generate"
+    
+    # MySQL Databse Configuration
+    # - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && sed -i '/^DB_DB_CONNECTION=/s/=.*/=mysql/' .env.example"
+    # - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && sed -i '/^DB_HOST=/s/=.*/=127.0.0.1/' .env.example"
+    # - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && sed -i '/^DB_PORT=/s/=.*/=3306/' .env.example"
+    # - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && sed -i '/^DB_DATABASE=/s/=.*/=temple_app_DB/' .env.example"
+    # - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && sed -i '/^DB_USERNAME=/s/=.*/=marketing/' .env.example"
+    # - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && sed -i '/^DB_PASSWORD=/s/=.*/=rLxt7MCjPI4snKbr1@3/' .env.example"
+    # - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && cp .env.example .env"
+
+    # PHP artisan commands
+    #- sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && php artisan key:generate"
+    #- sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && php artisan passport:keys --force"
+    #- sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && php artisan migrate"
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "cd /home/meeting/source_code/backend/user && php artisan storage:link"    
+    - sshpass -p $SSH_AUTHENTICATION ssh -o StrictHostKeyChecking=no $DEPLOY_SERVER "sh /home/meeting/source_code/script.sh"
+  tags:
+    - temple
+  only:
+    - Staging  
+
+# sonarqube-check:
+#   stage: sonarqube
+#   image: 
+#     name: sonarsource/sonar-scanner-cli:latest
+#     entrypoint: [""]
+#   variables:
+#     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
+#     GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+#   cache:
+#     key: "${CI_JOB_NAME}"
+#     paths:
+#       - .sonar/cache
+#   script: 
+#     - sonar-scanner
+#   allow_failure: true
+#   only:
+#     - Staging
+#   tags:
+#     - temple
+
+  <<: *retry_job
